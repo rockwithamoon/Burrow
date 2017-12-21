@@ -76,6 +76,9 @@ type ConsumerGroupStatus struct {
 	// Status for the individual partitions
 	Status StatusConstant `json:"status"`
 
+	// The state of the consumer
+	State StateConstant `json:"state"`
+
 	// A number between 0.0 and 1.0 that describes the percentage complete the partition information is for this group.
 	// A partition that has a Complete value of less than 1.0 will be treated as zero.
 	Complete float32 `json:"complete"`
@@ -148,5 +151,32 @@ func (c StatusConstant) MarshalText() ([]byte, error) {
 
 // MarshalJSON implements the json.Marshaler interface. The status is the string representation of StatusConstant
 func (c StatusConstant) MarshalJSON() ([]byte, error) {
+	return json.Marshal(c.String())
+}
+
+type StateConstant int
+
+const (
+	StateNotFound     StateConstant = 0
+	StateOK           StateConstant = 1
+	StateRebalance    StateConstant = 2
+	StateAwaitingSync StateConstant = 3
+	StateNotActive    StateConstant = 4
+)
+
+var stateStrings = [...]string{"NOTFOUND", "STABLE", "REBALANCE", "AWAITINGSYNC", "NOTACTIVE"}
+
+func (c StateConstant) String() string {
+	if (c >= 0) && (c < StateConstant(len(stateStrings))) {
+		return stateStrings[c]
+	}
+	return "UNKNOWN"
+}
+
+func (c StateConstant) MarshalText() ([]byte, error) {
+	return []byte(c.String()), nil
+}
+
+func (c StateConstant) MarshalJSON() ([]byte, error) {
 	return json.Marshal(c.String())
 }

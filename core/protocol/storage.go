@@ -62,12 +62,16 @@ const (
 	// StorageFetchConsumersForTopic is the request type to obtain a list of all consumer groups consuming from a topic.
 	// Returns a []string
 	StorageFetchConsumersForTopic StorageRequestConstant = 11
+
+	// Store the consumer state
+	StorageSetConsumerState StorageRequestConstant = 12
 )
 
 var storageRequestStrings = [...]string{
 	"StorageSetBrokerOffset",
 	"StorageSetConsumerOffset",
 	"StorageSetConsumerOwner",
+	"StorageSetConsumerState",
 	"StorageSetDeleteTopic",
 	"StorageSetDeleteGroup",
 	"StorageFetchClusters",
@@ -115,6 +119,8 @@ type StorageRequest struct {
 
 	// The name of the consumer group to which the request applies
 	Group string
+
+	State string
 
 	// The name of the topic to which the request applies
 	Topic string
@@ -173,3 +179,8 @@ type ConsumerTopics map[string]ConsumerPartitions
 // ConsumerPartitions describes all partitions for a single topic. The index indicates the partition ID, and the value
 // is a pointer to a ConsumerPartition object with the offset information for that partition.
 type ConsumerPartitions []*ConsumerPartition
+
+type ConsumerStatus struct {
+	TopicList ConsumerTopics
+	State     StateConstant
+}

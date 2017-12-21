@@ -127,6 +127,7 @@ func (module *CachingEvaluator) getConsumerStatus(request *protocol.EvaluatorReq
 			Cluster:    request.Cluster,
 			Group:      request.Group,
 			Status:     protocol.StatusNotFound,
+			State:      protocol.StateNotFound,
 			Complete:   1.0,
 			Partitions: make([]*protocol.PartitionStatus, 0),
 			Maxlag:     nil,
@@ -143,6 +144,7 @@ func (module *CachingEvaluator) getConsumerStatus(request *protocol.EvaluatorReq
 				Cluster:         cachedStatus.Cluster,
 				Group:           cachedStatus.Group,
 				Status:          cachedStatus.Status,
+				State:           cachedStatus.State,
 				Complete:        cachedStatus.Complete,
 				Maxlag:          cachedStatus.Maxlag,
 				TotalLag:        cachedStatus.TotalLag,
@@ -201,6 +203,7 @@ func (module *CachingEvaluator) evaluateConsumerStatus(clusterAndConsumer string
 		Cluster:         cluster,
 		Group:           consumer,
 		Status:          protocol.StatusOK,
+		State:           protocol.StateOK,
 		Complete:        1.0,
 		Maxlag:          nil,
 		TotalLag:        0,
@@ -208,7 +211,7 @@ func (module *CachingEvaluator) evaluateConsumerStatus(clusterAndConsumer string
 	}
 
 	// Count up the number of partitions for this consumer first, so we can size our slice correctly
-	topics := response.(protocol.ConsumerTopics)
+	topics := response.(protocol.ConsumerStatus).TopicList
 	for _, partitions := range topics {
 		for _, partition := range partitions {
 			status.TotalPartitions++
@@ -216,6 +219,7 @@ func (module *CachingEvaluator) evaluateConsumerStatus(clusterAndConsumer string
 		}
 	}
 	status.Partitions = make([]*protocol.PartitionStatus, status.TotalPartitions)
+	status.State = protocol.StateConstant(response.(protocol.ConsumerStatus).State)
 
 	count := 0
 	completePartitions := 0

@@ -65,6 +65,7 @@ type consumerGroup struct {
 	lock       *sync.RWMutex
 	topics     map[string][]*consumerPartition
 	lastCommit int64
+	groupState string
 }
 
 type clusterOffsets struct {
@@ -178,6 +179,7 @@ func (module *InMemoryStorage) requestWorker(workerNum int, requestChannel chan 
 		protocol.StorageFetchTopic:             module.fetchTopic,
 		protocol.StorageClearConsumerOwners:    module.clearConsumerOwners,
 		protocol.StorageFetchConsumersForTopic: module.fetchConsumersForTopicList,
+		protocol.StorageSetConsumerState:       module.addConsumerState,
 	}
 
 	workerLogger := module.Log.With(zap.Int("worker", workerNum))
@@ -202,7 +204,7 @@ func (module *InMemoryStorage) mainLoop() {
 
 	for r := range module.requestChannel {
 		switch r.RequestType {
-		case protocol.StorageSetBrokerOffset, protocol.StorageSetDeleteTopic, protocol.StorageFetchClusters, protocol.StorageFetchConsumers, protocol.StorageFetchTopics, protocol.StorageFetchTopic, protocol.StorageFetchConsumersForTopic:
+		case protocol.StorageSetBrokerOffset, protocol.StorageSetDeleteTopic, protocol.StorageFetchClusters, protocol.StorageFetchConsumers, protocol.StorageFetchTopics, protocol.StorageFetchTopic, protocol.StorageFetchConsumersForTopic, protocol.StorageSetConsumerState:
 			// Send to any worker
 			module.workers[int(rand.Int31n(int32(module.numWorkers)))] <- r
 		case protocol.StorageSetConsumerOffset, protocol.StorageSetConsumerOwner, protocol.StorageSetDeleteGroup, protocol.StorageClearConsumerOwners, protocol.StorageFetchConsumer:
@@ -217,6 +219,40 @@ func (module *InMemoryStorage) mainLoop() {
 			}
 		}
 	}
+}
+
+func (module *InMemoryStorage) addConsumerState(request *protocol.StorageRequest, requestLogger *zap.Logger) {
+	clusterMap, ok := module.offsets[request.Cluster]
+	if !ok {
+		// Ignore offsets for clusters that we don't know about - should never happen anyways
+		requestLogger.Warn("unknown cluster")
+		return
+	}
+
+	if !module.acceptConsumerGroup(request.Group) {
+		requestLogger.Debug("dropped", zap.String("reason", "group not whitelisted"))
+		return
+	}
+
+	// Make the consumer group if it does not yet exist
+	clusterMap.consumerLock.Lock()
+	consumerMap, ok := clusterMap.consumer[request.Group]
+	if !ok {
+		clusterMap.consumer[request.Group] = &consumerGroup{
+			lock:   &sync.RWMutex{},
+			topics: make(map[string][]*consumerPartition),
+		}
+		consumerMap = clusterMap.consumer[request.Group]
+	}
+	clusterMap.consumerLock.Unlock()
+
+	// For the rest of this, we need the write lock for the consumer group
+	consumerMap.lock.Lock()
+	defer consumerMap.lock.Unlock()
+
+	// Write the state for the given consumer
+	requestLogger.Debug("ok")
+	consumerMap.groupState = request.State
 }
 
 func (module *InMemoryStorage) addBrokerOffset(request *protocol.StorageRequest, requestLogger *zap.Logger) {
@@ -658,6 +694,21 @@ func (module *InMemoryStorage) fetchConsumer(request *protocol.StorageRequest, r
 		return
 	}
 
+	state := protocol.StateNotFound
+
+	switch consumerMap.groupState {
+	case "Stable":
+		state = protocol.StateOK
+	case "PreparingRebalance":
+		state = protocol.StateRebalance
+	case "AwaitingSync":
+		state = protocol.StateAwaitingSync
+	case "Empty":
+		state = protocol.StateNotActive
+	case "Dead":
+		state = protocol.StateNotActive
+	}
+
 	// Lazily purge consumers that haven't committed in longer than the defined interval. Return as a 404
 	if ((time.Now().Unix() - module.expireGroup) * 1000) > consumerMap.lastCommit {
 		// Swap for a write lock
@@ -701,8 +752,10 @@ func (module *InMemoryStorage) fetchConsumer(request *protocol.StorageRequest, r
 	}
 	clusterMap.brokerLock.RUnlock()
 
+	e := protocol.ConsumerStatus{TopicList: topicList, State: state}
+
 	requestLogger.Debug("ok")
-	request.Reply <- topicList
+	request.Reply <- e
 }
 
 func (module *InMemoryStorage) fetchConsumersForTopicList(request *protocol.StorageRequest, requestLogger *zap.Logger) {

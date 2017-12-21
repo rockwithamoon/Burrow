@@ -293,11 +293,16 @@ type SaramaBroker interface {
 
 	// GetAvailableOffsets sends an OffsetRequest to the broker and returns the OffsetResponse that was received
 	GetAvailableOffsets(*sarama.OffsetRequest) (*sarama.OffsetResponse, error)
+	DescribeGroups(request *sarama.DescribeGroupsRequest) (*sarama.DescribeGroupsResponse, error)
 }
 
 // BurrowSaramaBroker is an implementation of the SaramaBroker interface that is used with SaramaClient
 type BurrowSaramaBroker struct {
 	broker *sarama.Broker
+}
+
+func (b *BurrowSaramaBroker) DescribeGroups(request *sarama.DescribeGroupsRequest) (*sarama.DescribeGroupsResponse, error) {
+	return b.broker.DescribeGroups(request)
 }
 
 // ID returns the broker ID retrieved from Kafka's metadata, or -1 if that is not known.

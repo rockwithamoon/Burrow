@@ -123,6 +123,7 @@ func (module *KafkaCluster) mainLoop(client helpers.SaramaClient) {
 		select {
 		case <-module.offsetTicker.C:
 			module.getOffsets(client)
+			module.updateState(client)
 		case <-module.metadataTicker.C:
 			// Update metadata on next offset fetch
 			module.fetchMetadata = true
@@ -130,6 +131,60 @@ func (module *KafkaCluster) mainLoop(client helpers.SaramaClient) {
 			return
 		}
 	}
+}
+
+func (module *KafkaCluster) describeGroups(groups []string, client helpers.SaramaClient) {
+	brokers := client.Brokers()
+	request := sarama.DescribeGroupsRequest{groups}
+
+	// try every broker until we get a responce
+	for brokerId := range brokers {
+		response, err := brokers[brokerId].DescribeGroups(&request)
+		if err == nil && len(response.Groups) > 0 {
+			for _, Group := range response.Groups {
+				groupState := &protocol.StorageRequest{
+					RequestType: protocol.StorageSetConsumerState,
+					Cluster:     module.name,
+					Group:       Group.GroupId,
+					State:       Group.State,
+					Timestamp:   time.Now().Unix() * 1000,
+				}
+				if Group.State != "" {
+					helpers.TimeoutSendStorageRequest(module.App.StorageChannel, groupState, 1)
+				}
+
+			}
+			brokers[brokerId].Close()
+			return
+		} else {
+			module.Log.Error("broker does not respond", zap.String("sarama_error", err.Error()))
+			continue
+		}
+		brokers[brokerId].Close()
+	}
+}
+
+func (module *KafkaCluster) updateState(client helpers.SaramaClient) {
+
+	groups := make([]string, 0)
+
+	request := &protocol.StorageRequest{
+		RequestType: protocol.StorageFetchConsumers,
+		Cluster:     module.name,
+		Reply:       make(chan interface{}),
+	}
+	module.App.StorageChannel <- request
+	response := <-request.Reply
+
+	if response == nil {
+		module.Log.Error("state update error")
+	} else {
+		for _, consumer := range response.([]string) {
+			groups = append(groups, consumer)
+		}
+		module.describeGroups(groups, client)
+	}
+
 }
 
 func (module *KafkaCluster) maybeUpdateMetadataAndDeleteTopics(client helpers.SaramaClient) {
