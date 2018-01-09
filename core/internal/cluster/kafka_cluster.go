@@ -160,7 +160,6 @@ func (module *KafkaCluster) describeGroups(groups []string, client helpers.Saram
 			module.Log.Error("broker does not respond", zap.String("sarama_error", err.Error()))
 			continue
 		}
-		brokers[brokerId].Close()
 	}
 }
 
