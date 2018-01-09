@@ -162,9 +162,10 @@ const (
 	StateRebalance    StateConstant = 2
 	StateAwaitingSync StateConstant = 3
 	StateNotActive    StateConstant = 4
+	StateDead         StateConstant = 5
 )
 
-var stateStrings = [...]string{"NOTFOUND", "STABLE", "REBALANCE", "AWAITINGSYNC", "NOTACTIVE"}
+var stateStrings = [...]string{"NOTFOUND", "STABLE", "REBALANCE", "AWAITINGSYNC", "NOTACTIVE", "DEAD"}
 
 func (c StateConstant) String() string {
 	if (c >= 0) && (c < StateConstant(len(stateStrings))) {

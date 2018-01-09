@@ -706,7 +706,7 @@ func (module *InMemoryStorage) fetchConsumer(request *protocol.StorageRequest, r
 	case "Empty":
 		state = protocol.StateNotActive
 	case "Dead":
-		state = protocol.StateNotActive
+		state = protocol.StateDead
 	}
 
 	// Lazily purge consumers that haven't committed in longer than the defined interval. Return as a 404
