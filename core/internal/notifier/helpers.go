@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"bytes"
-	"github.com/linkedin/Burrow/core/protocol"
+	"github.com/rockwithamoon/Burrow/core/protocol"
 )
 
 // executeTemplate provides a common interface for notifier modules to call to process a text/template in the context

@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/linkedin/Burrow/core/protocol"
+	"github.com/rockwithamoon/Burrow/core/protocol"
 )
 
 func TestStartCoordinatorModules(t *testing.T) {

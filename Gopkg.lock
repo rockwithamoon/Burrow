@@ -68,6 +68,12 @@
   version = "v1.4.7"
 
 [[projects]]
+  name = "github.com/linkedin/Burrow"
+  packages = ["core","core/internal/cluster","core/internal/consumer","core/internal/evaluator","core/internal/helpers","core/internal/httpserver","core/internal/notifier","core/internal/storage","core/internal/zookeeper","core/protocol"]
+  revision = "792dbd937a24b42eecb1a2240e13e0e786463df1"
+  version = "v1.0.0"
+
+[[projects]]
   name = "github.com/magiconair/properties"
   packages = ["."]
   revision = "be5ece7dd465ab0765a9682137865547526d1dfb"
@@ -208,6 +214,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "0aed9c90d7fc3d495468530a8d1e486ed42a10bf5b58f8f7aef2a9adef5375ee"
+  inputs-digest = "cc52ca706bc3b412d1ced4e16cca6f24f49949c81e0cf7cbdee850634077226d"
   solver-name = "gps-cdcl"
   solver-version = 1

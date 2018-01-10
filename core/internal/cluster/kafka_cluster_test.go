@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/linkedin/Burrow/core/internal/helpers"
-	"github.com/linkedin/Burrow/core/protocol"
+	"github.com/rockwithamoon/Burrow/core/internal/helpers"
+	"github.com/rockwithamoon/Burrow/core/protocol"
 	"sync"
 )
 

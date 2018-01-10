@@ -23,8 +23,8 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
-	"github.com/linkedin/Burrow/core/internal/helpers"
-	"github.com/linkedin/Burrow/core/protocol"
+	"github.com/rockwithamoon/Burrow/core/internal/helpers"
+	"github.com/rockwithamoon/Burrow/core/protocol"
 )
 
 // Coordinator (zookeeper) manages a single Zookeeper connection for other coordinators and modules to make use of in
