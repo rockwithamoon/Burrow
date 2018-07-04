@@ -41,6 +41,7 @@ type InMemoryStorage struct {
 	numWorkers  int
 	expireGroup int64
 	minDistance int64
+	queueDepth  int
 
 	requestChannel chan *protocol.StorageRequest
 	workersRunning sync.WaitGroup
@@ -69,7 +70,7 @@ type consumerGroup struct {
 }
 
 type clusterOffsets struct {
-	broker   map[string][]*brokerOffset
+	broker   map[string][]*ring.Ring
 	consumer map[string]*consumerGroup
 
 	// This lock is used when modifying broker topics or offsets
@@ -87,19 +88,22 @@ func (module *InMemoryStorage) Configure(name string, configRoot string) {
 	module.Log.Info("configuring")
 
 	module.name = name
-	module.requestChannel = make(chan *protocol.StorageRequest)
-	module.workersRunning = sync.WaitGroup{}
-	module.mainRunning = sync.WaitGroup{}
-	module.offsets = make(map[string]clusterOffsets)
 
 	// Set defaults for configs if needed
 	viper.SetDefault(configRoot+".intervals", 10)
 	viper.SetDefault(configRoot+".expire-group", 604800)
 	viper.SetDefault(configRoot+".workers", 20)
+	viper.SetDefault(configRoot+".queue-depth", 1)
 	module.intervals = viper.GetInt(configRoot + ".intervals")
 	module.expireGroup = viper.GetInt64(configRoot + ".expire-group")
 	module.numWorkers = viper.GetInt(configRoot + ".workers")
 	module.minDistance = viper.GetInt64(configRoot + ".min-distance")
+	module.queueDepth = viper.GetInt(configRoot + ".queue-depth")
+
+	module.requestChannel = make(chan *protocol.StorageRequest, module.queueDepth)
+	module.workersRunning = sync.WaitGroup{}
+	module.mainRunning = sync.WaitGroup{}
+	module.offsets = make(map[string]clusterOffsets)
 
 	whitelist := viper.GetString(configRoot + ".group-whitelist")
 	if whitelist != "" {
@@ -126,7 +130,7 @@ func (module *InMemoryStorage) Start() error {
 	for cluster := range viper.GetStringMap("cluster") {
 		module.
 			offsets[cluster] = clusterOffsets{
-			broker:       make(map[string][]*brokerOffset),
+			broker:       make(map[string][]*ring.Ring),
 			consumer:     make(map[string]*consumerGroup),
 			brokerLock:   &sync.RWMutex{},
 			consumerLock: &sync.RWMutex{},
@@ -136,7 +140,7 @@ func (module *InMemoryStorage) Start() error {
 	// Start the appropriate number of workers, with a channel for each
 	module.workers = make([]chan *protocol.StorageRequest, module.numWorkers)
 	for i := 0; i < module.numWorkers; i++ {
-		module.workers[i] = make(chan *protocol.StorageRequest)
+		module.workers[i] = make(chan *protocol.StorageRequest, module.queueDepth)
 		module.workersRunning.Add(1)
 		go module.requestWorker(i, module.workers[i])
 	}
@@ -268,25 +272,30 @@ func (module *InMemoryStorage) addBrokerOffset(request *protocol.StorageRequest,
 
 	topicList, ok := clusterMap.broker[request.Topic]
 	if !ok {
-		clusterMap.broker[request.Topic] = make([]*brokerOffset, request.TopicPartitionCount)
+		clusterMap.broker[request.Topic] = make([]*ring.Ring, 0, request.TopicPartitionCount)
 		topicList = clusterMap.broker[request.Topic]
 	}
 	if request.TopicPartitionCount >= int32(len(topicList)) {
-		// The partition count has increased. Append enough extra partitions to our slice
+		// The partition count has increased. Append enough extra partitions, with offset rings, to our slice
 		for i := int32(len(topicList)); i < request.TopicPartitionCount; i++ {
-			topicList = append(topicList, nil)
+			topicList = append(topicList, ring.New(module.intervals))
 		}
 	}
 
+	// Advance to the next ring entry (this means the pointer is always at the most recent entry, rather than the
+	// oldest entry)
+	topicList[request.Partition] = topicList[request.Partition].Next()
 	partitionEntry := topicList[request.Partition]
-	if partitionEntry == nil {
-		topicList[request.Partition] = &brokerOffset{
+
+	if partitionEntry.Value == nil {
+		partitionEntry.Value = &brokerOffset{
 			Offset:    request.Offset,
 			Timestamp: request.Timestamp,
 		}
 	} else {
-		partitionEntry.Offset = request.Offset
-		partitionEntry.Timestamp = request.Timestamp
+		ringval, _ := partitionEntry.Value.(*brokerOffset)
+		ringval.Offset = request.Offset
+		ringval.Timestamp = request.Timestamp
 	}
 
 	requestLogger.Debug("ok")
@@ -313,12 +322,12 @@ func (module *InMemoryStorage) getBrokerOffset(clusterMap *clusterOffsets, topic
 		requestLogger.Debug("dropped", zap.String("reason", "no broker partition"))
 		return 0, 0
 	}
-	if topicPartitionList[partition] == nil {
+	if topicPartitionList[partition].Value == nil {
 		// We know about the topic and partition, but we haven't actually gotten the broker offset yet
 		requestLogger.Debug("dropped", zap.String("reason", "no broker offset"))
 		return 0, 0
 	}
-	return topicPartitionList[partition].Offset, int32(len(topicPartitionList))
+	return topicPartitionList[partition].Value.(*brokerOffset).Offset, int32(len(topicPartitionList))
 }
 
 func (module *InMemoryStorage) getPartitionRing(consumerMap *consumerGroup, topic string, partition int32, partitionCount int32, requestLogger *zap.Logger) *ring.Ring {
@@ -359,6 +368,11 @@ func (module *InMemoryStorage) addConsumerOffset(request *protocol.StorageReques
 	if !ok {
 		// Ignore offsets for clusters that we don't know about - should never happen anyways
 		requestLogger.Warn("unknown cluster")
+		return
+	}
+
+	if request.Timestamp < ((time.Now().Unix() - module.expireGroup) * 1000) {
+		requestLogger.Debug("dropped", zap.String("reason", "old offset"))
 		return
 	}
 
@@ -630,7 +644,7 @@ func (module *InMemoryStorage) fetchTopic(request *protocol.StorageRequest, requ
 
 	offsetList := make([]int64, 0, len(topicList))
 	for _, partition := range topicList {
-		offsetList = append(offsetList, partition.Offset)
+		offsetList = append(offsetList, partition.Value.(*brokerOffset).Offset)
 	}
 	clusterMap.brokerLock.RUnlock()
 
@@ -735,8 +749,17 @@ func (module *InMemoryStorage) fetchConsumer(request *protocol.StorageRequest, r
 		}
 
 		for p, partition := range partitions {
+			// Build the slice of broker offsets to return
+			partition.BrokerOffsets = make([]int64, 0, module.intervals)
+			brokerOffsetPtr := topicMap[p].Next()
+			brokerOffsetPtr.Do(func(item interface{}) {
+				if item != nil {
+					partition.BrokerOffsets = append(partition.BrokerOffsets, item.(*brokerOffset).Offset)
+				}
+			})
+
 			if len(partition.Offsets) > 0 {
-				brokerOffset := topicMap[p].Offset
+				brokerOffset := partition.BrokerOffsets[len(partition.BrokerOffsets)-1]
 				lastOffset := partition.Offsets[len(partition.Offsets)-1]
 				if lastOffset != nil {
 					if brokerOffset < lastOffset.Offset {

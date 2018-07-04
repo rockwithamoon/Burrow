@@ -165,7 +165,9 @@ func (nc *Coordinator) Configure() {
 
 	// Set the function for parsing templates and calling module Notify (configurable to enable testing)
 	if nc.templateParseFunc == nil {
-		nc.templateParseFunc = template.New("notifier").Funcs(helperFunctionMap).ParseFiles
+		nc.templateParseFunc = func(filenames ...string) (*template.Template, error) {
+			return template.New("notifier").Funcs(helperFunctionMap).ParseFiles(filenames...)
+		}
 	}
 	if nc.notifyModuleFunc == nil {
 		nc.notifyModuleFunc = nc.notifyModule
@@ -180,6 +182,7 @@ func (nc *Coordinator) Configure() {
 
 		// Set some defaults for common module fields
 		viper.SetDefault(configRoot+".interval", 60)
+		viper.SetDefault(configRoot+".send-interval", viper.GetInt64(configRoot+".interval"))
 		viper.SetDefault(configRoot+".threshold", 2)
 
 		// Compile the whitelist for the consumer groups to notify for
@@ -230,7 +233,6 @@ func (nc *Coordinator) Configure() {
 		module := getModuleForClass(nc.App, name, viper.GetString(configRoot+".class-name"), groupWhitelist, groupBlacklist, extras, templateOpen, templateClose)
 		module.Configure(name, configRoot)
 		nc.modules[name] = module
-
 		interval := viper.GetInt64(configRoot + ".interval")
 		if interval < nc.minInterval {
 			nc.minInterval = interval
@@ -367,6 +369,7 @@ func (nc *Coordinator) sendEvaluatorRequests() {
 			consumerGroup.Lock.RLock()
 			for consumer, groupInfo := range consumerGroup.Groups {
 				if groupInfo.LastEval.Before(sendBefore) {
+					nc.Log.Debug("Evaluating group", zap.String("group", consumer))
 					go func(sendCluster string, sendConsumer string) {
 						nc.App.EvaluatorChannel <- &protocol.EvaluatorRequest{
 							Reply:   nc.evaluatorResponse,
@@ -509,9 +512,11 @@ func (nc *Coordinator) processConsumerList(cluster string, replyChan chan interf
 		consumerMap := make(map[string]struct{})
 		for _, group := range consumerList {
 			consumerMap[group] = struct{}{}
-			nc.clusters[cluster].Groups[group] = &consumerGroup{
-				LastNotify: make(map[string]time.Time),
-				LastEval:   time.Now().Add(-time.Duration(rand.Int63n(nc.minInterval*1000)) * time.Millisecond),
+			if _, ok := nc.clusters[cluster].Groups[group]; !ok {
+				nc.clusters[cluster].Groups[group] = &consumerGroup{
+					LastNotify: make(map[string]time.Time),
+					LastEval:   time.Now().Add(-time.Duration(rand.Int63n(nc.minInterval*1000)) * time.Millisecond),
+				}
 			}
 		}
 
@@ -550,7 +555,7 @@ func (nc *Coordinator) notifyModule(module Module, status *protocol.ConsumerGrou
 
 	// Only send the notification if it's been at least our Interval since the last one for this group
 	currentTime := time.Now()
-	if currentTime.Sub(cgroup.LastNotify[module.GetName()]) > (time.Duration(viper.GetInt("notifier."+moduleName+".interval")) * time.Second) {
+	if currentTime.Sub(cgroup.LastNotify[module.GetName()]) > (time.Duration(viper.GetInt("notifier."+moduleName+".send-interval")) * time.Second) {
 		module.Notify(status, eventID, startTime, false)
 		cgroup.LastNotify[module.GetName()] = currentTime
 	}
